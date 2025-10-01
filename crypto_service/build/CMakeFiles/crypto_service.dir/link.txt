@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -shared -Wl,-soname,libcrypto_service.so -o lib/libcrypto_service.so CMakeFiles/crypto_service.dir/src/setup.cpp.o CMakeFiles/crypto_service.dir/src/setup_bridge.cpp.o  /usr/local/lib/libpbc.so /usr/lib/x86_64-linux-gnu/libgmp.so 

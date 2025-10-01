@@ -1,0 +1,3 @@
+/home/kerem/E-votingWebApp/crypto_service/build/CMakeFiles/crypto_service.dir
+/home/kerem/E-votingWebApp/crypto_service/build/CMakeFiles/edit_cache.dir
+/home/kerem/E-votingWebApp/crypto_service/build/CMakeFiles/rebuild_cache.dir

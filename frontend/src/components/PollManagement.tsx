@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import SetupParamsDisplay from './SetupParamsDisplay';
 
 interface PollManagementProps {
   token: string;
@@ -15,26 +16,20 @@ interface Poll {
   setup_completed?: boolean;
 }
 
-interface Voter {
-  id: number;
-  email: string;
-}
-
 const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
   const [polls, setPolls] = useState<Poll[]>([]);
-  const [voters, setVoters] = useState<Voter[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [selectedPollForDetails, setSelectedPollForDetails] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
 
   // Form state
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [selectedVoters, setSelectedVoters] = useState<number[]>([]);
+  const [votersFile, setVotersFile] = useState<File | null>(null);
 
   useEffect(() => {
     fetchPolls();
-    fetchVoters();
   }, []);
 
   const fetchPolls = async () => {
@@ -48,16 +43,9 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
     }
   };
 
-  const fetchVoters = async () => {
-    try {
-      // Bu endpoint eklenecek - şimdilik mock data
-      setVoters([
-        { id: 1, email: 'voter1@example.com' },
-        { id: 2, email: 'voter2@example.com' },
-        { id: 3, email: 'voter3@example.com' },
-      ]);
-    } catch (error: any) {
-      console.error('Failed to fetch voters:', error);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setVotersFile(e.target.files[0]);
     }
   };
 
@@ -66,23 +54,31 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
     setIsLoading(true);
     setMessage('');
 
+    const formData = new FormData();
+    formData.append('title', title);
+    if (description) {
+      formData.append('description', description);
+    }
+    if (votersFile) {
+      formData.append('voters_file', votersFile);
+    }
+
     try {
       const response = await axios.post(
         'http://localhost:8000/admin/polls',
+        formData,
         {
-          title,
-          description: description || null,
-          voter_ids: selectedVoters
-        },
-        {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data',
+          }
         }
       );
 
-      setMessage('Poll created successfully!');
+      setMessage(`Poll created successfully! ${response.data.voters_added || 0} voters added.`);
       setTitle('');
       setDescription('');
-      setSelectedVoters([]);
+      setVotersFile(null);
       setShowCreateForm(false);
       fetchPolls();
     } catch (error: any) {
@@ -93,7 +89,7 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
   };
 
   const handleTriggerSetup = async (pollId: number) => {
-    if (!confirm('Are you sure you want to run cryptographic setup? This cannot be undone.')) {
+    if (!confirm('Are you sure you want to run cryptographic setup? This may take a few seconds and cannot be undone.')) {
       return;
     }
 
@@ -111,19 +107,12 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
 
       setMessage('Setup completed successfully! Poll is now active.');
       fetchPolls();
+      setSelectedPollForDetails(pollId);
     } catch (error: any) {
       setMessage(`Setup failed: ${error.response?.data?.error || 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const toggleVoterSelection = (voterId: number) => {
-    setSelectedVoters(prev =>
-      prev.includes(voterId)
-        ? prev.filter(id => id !== voterId)
-        : [...prev, voterId]
-    );
   };
 
   const getStatusColor = (status: string) => {
@@ -152,7 +141,8 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
           padding: '15px',
           marginBottom: '20px',
           backgroundColor: message.includes('Error') || message.includes('failed') ? '#ff44441a' : '#44ff441a',
-          borderRadius: '8px'
+          borderRadius: '8px',
+          border: message.includes('Error') || message.includes('failed') ? '1px solid #ff4444' : '1px solid #44ff44'
         }}>
           {message}
         </div>
@@ -192,36 +182,23 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
             </div>
 
             <div style={{ marginBottom: '15px', textAlign: 'left' }}>
-              <label style={{ display: 'block', marginBottom: '10px' }}>Select Voters *</label>
-              <div style={{
-                maxHeight: '200px',
-                overflowY: 'auto',
-                border: '1px solid #444',
-                borderRadius: '4px',
-                padding: '10px'
-              }}>
-                {voters.map(voter => (
-                  <div key={voter.id} style={{ marginBottom: '8px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedVoters.includes(voter.id)}
-                        onChange={() => toggleVoterSelection(voter.id)}
-                        style={{ marginRight: '10px' }}
-                      />
-                      {voter.email}
-                    </label>
-                  </div>
-                ))}
-              </div>
+              <label style={{ display: 'block', marginBottom: '10px' }}>Voters CSV File (Optional)</label>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileChange}
+                style={{ width: '100%', padding: '10px' }}
+              />
               <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>
-                Selected: {selectedVoters.length} voters
+                CSV format: tc,email,phone (no header row)
+                <br />
+                Example: 12345678901,voter@email.com,05551234567
               </p>
             </div>
 
             <button
               type="submit"
-              disabled={isLoading || selectedVoters.length === 0}
+              disabled={isLoading}
               style={{ width: '100%', padding: '12px', fontSize: '16px' }}
             >
               {isLoading ? 'Creating...' : 'Create Poll'}
@@ -271,7 +248,7 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
                     </div>
                   </div>
 
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'right', display: 'flex', gap: '10px' }}>
                     {poll.status === 'draft' && (
                       <button
                         onClick={() => handleTriggerSetup(poll.id)}
@@ -284,16 +261,32 @@ const PollManagement: React.FC<PollManagementProps> = ({ token }) => {
                           cursor: 'pointer'
                         }}
                       >
-                        🔐 Run Setup
+                        Run Setup
                       </button>
                     )}
-                    {poll.setup_completed && (
-                      <span style={{ color: '#4CAF50', fontSize: '12px' }}>
-                        ✓ Setup Completed
-                      </span>
+                    {poll.status === 'active' && (
+                      <button
+                        onClick={() => setSelectedPollForDetails(
+                          selectedPollForDetails === poll.id ? null : poll.id
+                        )}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#2a2a2a',
+                          border: '1px solid #44ff44',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          color: '#44ff44'
+                        }}
+                      >
+                        {selectedPollForDetails === poll.id ? 'Hide Parameters' : 'View Parameters'}
+                      </button>
                     )}
                   </div>
                 </div>
+
+                {selectedPollForDetails === poll.id && poll.status === 'active' && (
+                  <SetupParamsDisplay pollId={poll.id} />
+                )}
               </div>
             ))}
           </div>

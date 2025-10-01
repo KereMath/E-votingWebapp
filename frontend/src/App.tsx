@@ -1,18 +1,23 @@
 import { useState } from 'react';
 import AdminLogin from './components/AdminLogin';
 import VoterLogin from './components/VoterLogin';
+import AuthorityLogin from './components/AuthorityLogin';
 import VoterPanel from './components/VoterPanel';
 import VoterUpload from './components/VoterUpload';
 import PollManagement from './components/PollManagement';
+import AuthorityPanel from './components/AuthorityPanel';
 import './App.css';
 
-type UserType = 'none' | 'admin' | 'voter';
+type UserType = 'none' | 'admin' | 'voter' | 'authority';
 
 function App() {
   const [userType, setUserType] = useState<UserType>('none');
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [voterToken, setVoterToken] = useState<string | null>(null);
   const [voterEmail, setVoterEmail] = useState<string>('');
+  const [authorityToken, setAuthorityToken] = useState<string | null>(null);
+  const [authorityName, setAuthorityName] = useState<string>('');
+  const [authorityEmail, setAuthorityEmail] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'voters' | 'polls'>('polls');
 
   const handleAdminLoginSuccess = (token: string) => {
@@ -24,11 +29,20 @@ function App() {
     setVoterEmail(email);
   };
 
+  const handleAuthorityLoginSuccess = (token: string, name: string, email: string) => {
+    setAuthorityToken(token);
+    setAuthorityName(name);
+    setAuthorityEmail(email);
+  };
+
   const handleLogout = () => {
     setUserType('none');
     setAdminToken(null);
     setVoterToken(null);
     setVoterEmail('');
+    setAuthorityToken(null);
+    setAuthorityName('');
+    setAuthorityEmail('');
     setActiveTab('polls');
   };
 
@@ -43,18 +57,24 @@ function App() {
           </p>
           <div style={{ marginTop: '40px' }}>
             <h2>Please select your role:</h2>
-            <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', marginTop: '20px' }}>
+            <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', marginTop: '20px', flexWrap: 'wrap' }}>
               <button 
                 onClick={() => setUserType('admin')}
                 style={{ padding: '20px 40px', fontSize: '18px' }}
               >
-                🔐 Admin Login
+                Admin Login
+              </button>
+              <button 
+                onClick={() => setUserType('authority')}
+                style={{ padding: '20px 40px', fontSize: '18px', backgroundColor: '#ff6b6b' }}
+              >
+                Election Authority
               </button>
               <button 
                 onClick={() => setUserType('voter')}
                 style={{ padding: '20px 40px', fontSize: '18px' }}
               >
-                🗳️ Voter Login
+                Voter Login
               </button>
             </div>
           </div>
@@ -73,7 +93,7 @@ function App() {
           {!adminToken ? (
             <>
               <button onClick={handleLogout} style={{ marginBottom: '20px' }}>
-                ← Back to Selection
+                Back to Selection
               </button>
               <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
             </>
@@ -123,6 +143,40 @@ function App() {
     );
   }
 
+  // Authority flow
+  if (userType === 'authority') {
+    return (
+      <div className="App">
+        <header className="App-header">
+          <h1>Secure E-Voting System - Election Authority</h1>
+          
+          {!authorityToken ? (
+            <>
+              <button onClick={handleLogout} style={{ marginBottom: '20px' }}>
+                Back to Selection
+              </button>
+              <AuthorityLogin onLoginSuccess={handleAuthorityLoginSuccess} />
+            </>
+          ) : (
+            <div style={{ width: '100%', maxWidth: '1200px' }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: '20px',
+                padding: '0 20px'
+              }}>
+                <h2>Welcome, {authorityName}!</h2>
+                <button onClick={handleLogout}>Logout</button>
+              </div>
+              <AuthorityPanel token={authorityToken} name={authorityName} email={authorityEmail} />
+            </div>
+          )}
+        </header>
+      </div>
+    );
+  }
+
   // Voter flow
   if (userType === 'voter') {
     return (
@@ -133,7 +187,7 @@ function App() {
           {!voterToken ? (
             <>
               <button onClick={handleLogout} style={{ marginBottom: '20px' }}>
-                ← Back to Selection
+                Back to Selection
               </button>
               <VoterLogin onLoginSuccess={handleVoterLoginSuccess} />
             </>
