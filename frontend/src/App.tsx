@@ -3,7 +3,6 @@ import AdminLogin from './components/AdminLogin';
 import VoterLogin from './components/VoterLogin';
 import AuthorityLogin from './components/AuthorityLogin';
 import VoterPanel from './components/VoterPanel';
-import VoterUpload from './components/VoterUpload';
 import PollManagement from './components/PollManagement';
 import AuthorityPanel from './components/AuthorityPanel';
 import './App.css';
@@ -18,7 +17,6 @@ function App() {
   const [authorityToken, setAuthorityToken] = useState<string | null>(null);
   const [authorityName, setAuthorityName] = useState<string>('');
   const [authorityEmail, setAuthorityEmail] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'voters' | 'polls'>('polls');
 
   const handleAdminLoginSuccess = (token: string) => {
     setAdminToken(token);
@@ -43,7 +41,6 @@ function App() {
     setAuthorityToken(null);
     setAuthorityName('');
     setAuthorityEmail('');
-    setActiveTab('polls');
   };
 
   // Initial selection screen
@@ -53,7 +50,7 @@ function App() {
         <header className="App-header">
           <h1>Secure E-Voting System</h1>
           <p style={{ color: '#888', maxWidth: '600px', margin: '20px auto' }}>
-            Threshold-based Identity Authentication with Cryptographic Privacy
+            Threshold-based Identity Authentication with Cryptographic Privacy (TIAC)
           </p>
           <div style={{ marginTop: '40px' }}>
             <h2>Please select your role:</h2>
@@ -98,7 +95,7 @@ function App() {
               <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
             </>
           ) : (
-            <div style={{ width: '100%', maxWidth: '1200px' }}>
+            <div style={{ width: '100%', maxWidth: '1400px' }}>
               <div style={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
@@ -106,36 +103,10 @@ function App() {
                 marginBottom: '20px',
                 padding: '0 20px'
               }}>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button
-                    onClick={() => setActiveTab('polls')}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: activeTab === 'polls' ? '#646cff' : '#2a2a2a',
-                      border: activeTab === 'polls' ? '2px solid #646cff' : '1px solid #444'
-                    }}
-                  >
-                    Polls & Setup
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('voters')}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: activeTab === 'voters' ? '#646cff' : '#2a2a2a',
-                      border: activeTab === 'voters' ? '2px solid #646cff' : '1px solid #444'
-                    }}
-                  >
-                    Voter Management
-                  </button>
-                </div>
+                <h2>Poll Management Dashboard</h2>
                 <button onClick={handleLogout}>Logout</button>
               </div>
-
-              {activeTab === 'polls' ? (
-                <PollManagement token={adminToken} />
-              ) : (
-                <VoterUpload token={adminToken} />
-              )}
+              <PollManagement token={adminToken} />
             </div>
           )}
         </header>
