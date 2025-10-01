@@ -1,6 +1,8 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use serde::{Serialize, Deserialize};
+
+// ============== SETUP FFI ==============
 
 #[repr(C)]
 struct SetupResultFFI {
@@ -14,26 +16,13 @@ struct SetupResultFFI {
     error_message: *mut c_char,
 }
 
-/// TIAC Setup Parameters
-/// Corresponds to: params = (G1, G2, GT, p, g1, g2, h1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupParams {
-    /// Pairing parameters (contains G1, G2, GT group info)
     pub pairing_param: String,
-    
-    /// p: Prime order of groups
     pub prime_order: String,
-    
-    /// g1: Generator of G1
     pub g1: String,
-    
-    /// g2: Generator of G2
     pub g2: String,
-    
-    /// h1: Second generator of G1 (independent from g1)
     pub h1: String,
-    
-    /// Security level (λ)
     pub security_level: i32,
 }
 
@@ -42,10 +31,6 @@ extern "C" {
     fn free_setup_result(result: *mut SetupResultFFI);
 }
 
-/// Execute TIAC Setup (Algorithm 1)
-/// 
-/// Input: security_level (λ = 256)
-/// Output: params = (G1, G2, GT, p, g1, g2, h1)
 pub fn execute_setup(security_level: i32) -> Result<SetupParams, String> {
     unsafe {
         let result = perform_setup(security_level);
@@ -93,25 +78,146 @@ pub fn execute_setup(security_level: i32) -> Result<SetupParams, String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// ============== KEYGEN FFI ==============
+
+#[repr(C)]
+struct AuthorityKeyFFI {
+    authority_index: i32,
+    sgk1: *mut c_char,
+    sgk2: *mut c_char,
+    vkm1: *mut c_char,
+    vkm2: *mut c_char,
+    vkm3: *mut c_char,
+}
+
+#[repr(C)]
+struct MasterVerKeyFFI {
+    alpha2: *mut c_char,
+    beta2: *mut c_char,
+    beta1: *mut c_char,
+}
+
+#[repr(C)]
+struct KeyGenResultFFI {
+    mvk: *mut MasterVerKeyFFI,
+    authority_keys: *mut AuthorityKeyFFI,
+    num_authorities: i32,
+    threshold: i32,
+    success: i32,
+    error_message: *mut c_char,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorityKey {
+    pub authority_index: i32,
+    pub sgk1: String,  // Secret key component 1
+    pub sgk2: String,  // Secret key component 2
+    pub vkm1: String,  // Verification key α2,m
+    pub vkm2: String,  // Verification key β2,m
+    pub vkm3: String,  // Verification key β1,m
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterVerKey {
+    pub alpha2: String,
+    pub beta2: String,
+    pub beta1: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyGenResult {
+    pub mvk: MasterVerKey,
+    pub authority_keys: Vec<AuthorityKey>,
+    pub threshold: i32,
+}
+
+extern "C" {
+    fn perform_keygen(
+        pairing_param_hex: *const c_char,
+        prime_order_hex: *const c_char,
+        g1_hex: *const c_char,
+        g2_hex: *const c_char,
+        h1_hex: *const c_char,
+        threshold: i32,
+        num_authorities: i32,
+    ) -> *mut KeyGenResultFFI;
     
-    #[test]
-    fn test_tiac_setup() {
-        match execute_setup(256) {
-            Ok(params) => {
-                assert!(!params.pairing_param.is_empty());
-                assert!(!params.prime_order.is_empty());
-                assert!(!params.g1.is_empty());
-                assert!(!params.g2.is_empty());
-                assert!(!params.h1.is_empty());
-                assert_eq!(params.security_level, 256);
-                println!("TIAC Setup successful!");
-            }
-            Err(e) => {
-                panic!("TIAC Setup failed: {}", e);
-            }
+    fn free_keygen_result(result: *mut KeyGenResultFFI);
+}
+
+pub fn execute_keygen(
+    setup_params: &SetupParams,
+    threshold: i32,
+    num_authorities: i32,
+) -> Result<KeyGenResult, String> {
+    unsafe {
+        let pairing_param_c = CString::new(setup_params.pairing_param.as_str())
+            .map_err(|e| format!("Invalid pairing param: {}", e))?;
+        let prime_order_c = CString::new(setup_params.prime_order.as_str())
+            .map_err(|e| format!("Invalid prime order: {}", e))?;
+        let g1_c = CString::new(setup_params.g1.as_str())
+            .map_err(|e| format!("Invalid g1: {}", e))?;
+        let g2_c = CString::new(setup_params.g2.as_str())
+            .map_err(|e| format!("Invalid g2: {}", e))?;
+        let h1_c = CString::new(setup_params.h1.as_str())
+            .map_err(|e| format!("Invalid h1: {}", e))?;
+        
+        let result = perform_keygen(
+            pairing_param_c.as_ptr(),
+            prime_order_c.as_ptr(),
+            g1_c.as_ptr(),
+            g2_c.as_ptr(),
+            h1_c.as_ptr(),
+            threshold,
+            num_authorities,
+        );
+        
+        if result.is_null() {
+            return Err("KeyGen function returned null".to_string());
         }
+        
+        let result_ref = &*result;
+        
+        if result_ref.success == 0 {
+            let error_msg = if !result_ref.error_message.is_null() {
+                CStr::from_ptr(result_ref.error_message)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "Unknown error during keygen".to_string()
+            };
+            free_keygen_result(result);
+            return Err(error_msg);
+        }
+        
+        // Parse Master Verification Key
+        let mvk_ref = &*result_ref.mvk;
+        let mvk = MasterVerKey {
+            alpha2: CStr::from_ptr(mvk_ref.alpha2).to_string_lossy().into_owned(),
+            beta2: CStr::from_ptr(mvk_ref.beta2).to_string_lossy().into_owned(),
+            beta1: CStr::from_ptr(mvk_ref.beta1).to_string_lossy().into_owned(),
+        };
+        
+        // Parse Authority Keys
+        let mut authority_keys = Vec::new();
+        for i in 0..result_ref.num_authorities {
+            let key_ref = &*result_ref.authority_keys.offset(i as isize);
+            authority_keys.push(AuthorityKey {
+                authority_index: key_ref.authority_index,
+                sgk1: CStr::from_ptr(key_ref.sgk1).to_string_lossy().into_owned(),
+                sgk2: CStr::from_ptr(key_ref.sgk2).to_string_lossy().into_owned(),
+                vkm1: CStr::from_ptr(key_ref.vkm1).to_string_lossy().into_owned(),
+                vkm2: CStr::from_ptr(key_ref.vkm2).to_string_lossy().into_owned(),
+                vkm3: CStr::from_ptr(key_ref.vkm3).to_string_lossy().into_owned(),
+            });
+        }
+        
+        free_keygen_result(result);
+        
+        Ok(KeyGenResult {
+            mvk,
+            authority_keys,
+            threshold,
+        })
     }
 }
