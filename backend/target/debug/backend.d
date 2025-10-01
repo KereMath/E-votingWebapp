@@ -1,0 +1,1 @@
+/home/kerem/E-votingWebApp/backend/target/debug/backend: /home/kerem/E-votingWebApp/backend/migrations/20251001120000_create_admins_table.sql /home/kerem/E-votingWebApp/backend/migrations/20251001150000_create_voters_table.sql /home/kerem/E-votingWebApp/backend/src/main.rs
