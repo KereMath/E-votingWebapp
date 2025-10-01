@@ -85,6 +85,51 @@ rebuild_cache:
 rebuild_cache/fast: rebuild_cache
 .PHONY : rebuild_cache/fast
 
+# Special rule for the target list_install_components
+list_install_components:
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Available install components are: \"Unspecified\""
+.PHONY : list_install_components
+
+# Special rule for the target list_install_components
+list_install_components/fast: list_install_components
+.PHONY : list_install_components/fast
+
+# Special rule for the target install
+install: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
+	/usr/bin/cmake -P cmake_install.cmake
+.PHONY : install
+
+# Special rule for the target install
+install/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
+	/usr/bin/cmake -P cmake_install.cmake
+.PHONY : install/fast
+
+# Special rule for the target install/local
+install/local: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
+	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+.PHONY : install/local
+
+# Special rule for the target install/local
+install/local/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
+	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+.PHONY : install/local/fast
+
+# Special rule for the target install/strip
+install/strip: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip
+
+# Special rule for the target install/strip
+install/strip/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip/fast
+
 # The main all target
 all: cmake_check_build_system
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/kerem/E-votingWebApp/crypto_service/build/CMakeFiles /home/kerem/E-votingWebApp/crypto_service/build//CMakeFiles/progress.marks
@@ -128,6 +173,54 @@ crypto_service: cmake_check_build_system
 crypto_service/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/build
 .PHONY : crypto_service/fast
+
+src/keygen.o: src/keygen.cpp.o
+.PHONY : src/keygen.o
+
+# target to build an object file
+src/keygen.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen.cpp.o
+.PHONY : src/keygen.cpp.o
+
+src/keygen.i: src/keygen.cpp.i
+.PHONY : src/keygen.i
+
+# target to preprocess a source file
+src/keygen.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen.cpp.i
+.PHONY : src/keygen.cpp.i
+
+src/keygen.s: src/keygen.cpp.s
+.PHONY : src/keygen.s
+
+# target to generate assembly for a file
+src/keygen.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen.cpp.s
+.PHONY : src/keygen.cpp.s
+
+src/keygen_bridge.o: src/keygen_bridge.cpp.o
+.PHONY : src/keygen_bridge.o
+
+# target to build an object file
+src/keygen_bridge.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen_bridge.cpp.o
+.PHONY : src/keygen_bridge.cpp.o
+
+src/keygen_bridge.i: src/keygen_bridge.cpp.i
+.PHONY : src/keygen_bridge.i
+
+# target to preprocess a source file
+src/keygen_bridge.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen_bridge.cpp.i
+.PHONY : src/keygen_bridge.cpp.i
+
+src/keygen_bridge.s: src/keygen_bridge.cpp.s
+.PHONY : src/keygen_bridge.s
+
+# target to generate assembly for a file
+src/keygen_bridge.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crypto_service.dir/build.make CMakeFiles/crypto_service.dir/src/keygen_bridge.cpp.s
+.PHONY : src/keygen_bridge.cpp.s
 
 src/setup.o: src/setup.cpp.o
 .PHONY : src/setup.o
@@ -184,8 +277,18 @@ help:
 	@echo "... clean"
 	@echo "... depend"
 	@echo "... edit_cache"
+	@echo "... install"
+	@echo "... install/local"
+	@echo "... install/strip"
+	@echo "... list_install_components"
 	@echo "... rebuild_cache"
 	@echo "... crypto_service"
+	@echo "... src/keygen.o"
+	@echo "... src/keygen.i"
+	@echo "... src/keygen.s"
+	@echo "... src/keygen_bridge.o"
+	@echo "... src/keygen_bridge.i"
+	@echo "... src/keygen_bridge.s"
 	@echo "... src/setup.o"
 	@echo "... src/setup.i"
 	@echo "... src/setup.s"

@@ -1,3 +1,4 @@
+cat > ~/E-votingWebApp/crypto_service/CMakeLists.txt << 'EOF'
 cmake_minimum_required(VERSION 3.10)
 project(CryptoService)
 
@@ -14,7 +15,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Source files
 set(SOURCES
     src/setup.cpp
-    src/crypto_bridge.cpp
+    src/setup_bridge.cpp
+    src/keygen.cpp
+    src/keygen_bridge.cpp
 )
 
 # Create shared library
@@ -29,8 +32,9 @@ set_target_properties(crypto_service PROPERTIES
     OUTPUT_NAME "crypto_service"
 )
 
-# Install rules (optional, for system-wide installation)
+# Install rules (optional)
 install(TARGETS crypto_service
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+EOF
