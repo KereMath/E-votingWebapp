@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use serde::{Serialize, Deserialize};
 
@@ -9,17 +9,32 @@ struct SetupResultFFI {
     g1: *mut c_char,
     g2: *mut c_char,
     h1: *mut c_char,
+    security_level: i32,
     success: i32,
     error_message: *mut c_char,
 }
 
+/// TIAC Setup Parameters
+/// Corresponds to: params = (G1, G2, GT, p, g1, g2, h1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupParams {
+    /// Pairing parameters (contains G1, G2, GT group info)
     pub pairing_param: String,
+    
+    /// p: Prime order of groups
     pub prime_order: String,
+    
+    /// g1: Generator of G1
     pub g1: String,
+    
+    /// g2: Generator of G2
     pub g2: String,
+    
+    /// h1: Second generator of G1 (independent from g1)
     pub h1: String,
+    
+    /// Security level (λ)
+    pub security_level: i32,
 }
 
 extern "C" {
@@ -27,6 +42,10 @@ extern "C" {
     fn free_setup_result(result: *mut SetupResultFFI);
 }
 
+/// Execute TIAC Setup (Algorithm 1)
+/// 
+/// Input: security_level (λ = 256)
+/// Output: params = (G1, G2, GT, p, g1, g2, h1)
 pub fn execute_setup(security_level: i32) -> Result<SetupParams, String> {
     unsafe {
         let result = perform_setup(security_level);
@@ -65,6 +84,7 @@ pub fn execute_setup(security_level: i32) -> Result<SetupParams, String> {
             h1: CStr::from_ptr(result_ref.h1)
                 .to_string_lossy()
                 .into_owned(),
+            security_level: result_ref.security_level,
         };
         
         free_setup_result(result);
@@ -78,7 +98,7 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_setup_execution() {
+    fn test_tiac_setup() {
         match execute_setup(256) {
             Ok(params) => {
                 assert!(!params.pairing_param.is_empty());
@@ -86,10 +106,11 @@ mod tests {
                 assert!(!params.g1.is_empty());
                 assert!(!params.g2.is_empty());
                 assert!(!params.h1.is_empty());
-                println!("Setup successful!");
+                assert_eq!(params.security_level, 256);
+                println!("TIAC Setup successful!");
             }
             Err(e) => {
-                panic!("Setup failed: {}", e);
+                panic!("TIAC Setup failed: {}", e);
             }
         }
     }

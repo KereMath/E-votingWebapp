@@ -1,0 +1,11 @@
+cargo:rustc-link-search=native=/home/kerem/E-votingWebApp/crypto_service/build/lib
+cargo:rustc-link-search=native=/usr/local/lib
+cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu
+cargo:rustc-link-search=native=/usr/lib
+cargo:rustc-link-lib=dylib=crypto_service
+cargo:rustc-link-lib=dylib=pbc
+cargo:rustc-link-lib=dylib=gmp
+cargo:rustc-link-arg=-Wl,-rpath,/home/kerem/E-votingWebApp/crypto_service/build/lib
+cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=src/crypto_ffi.rs

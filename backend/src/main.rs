@@ -36,6 +36,7 @@ struct AppState {
     db: PgPool,
     otp_store: OtpStore,
     voter_otp_store: VoterOtpStore,
+    authority_otp_store: Mutex::new(HashMap::new()), // Yeni
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,6 +101,35 @@ pub struct PollSetup {
     setup_completed_at: chrono::DateTime<Utc>,
     setup_by: i32,
 }
+// main.rs - struct'ları ekle
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Authority {
+    id: i32,
+    email: String,
+    name: String,
+    tc_hash: String,
+    phone_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AuthorityRegistration {
+    tc: String,
+    email: String,
+    phone: String,
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthorityClaims {
+    authority_id: i32,
+    exp: usize,
+}
+
+// OTP store'a authority ekle
+type AuthorityOtpStore = Mutex<HashMap<i32, (String, String, i64)>>;
+
+// AppState'e ekle
 
 // --- Ana Fonksiyon ---
 #[tokio::main]
@@ -151,7 +181,10 @@ async fn main() {
         .route("/voter/dashboard", get(voter_dashboard))
         .route("/voter/polls", get(get_voter_polls))
         .route_layer(middleware::from_fn_with_state(shared_state.clone(), voter_auth));
-
+    
+    let authority_routes = Router::new()
+        .route("/authority/dashboard", get(authority_dashboard))
+        .route_layer(middleware::from_fn_with_state(shared_state.clone(), authority_auth));
     // Public routes (setup parameters can be fetched publicly)
     let public_routes = Router::new()
         .route("/polls/:id/setup", get(get_poll_setup));
@@ -164,9 +197,13 @@ async fn main() {
         .route("/admin/login_verify", post(login_verify))
         .route("/voter/login_start", post(voter_login_start))
         .route("/voter/login_verify", post(voter_login_verify))
+        .route("/authority/register", post(register_authority))           // Yeni
+        .route("/authority/login_start", post(authority_login_start))     // Yeni
+        .route("/authority/login_verify", post(authority_login_verify))   // Yeni
         .merge(public_routes)
         .merge(admin_routes)
         .merge(voter_routes)
+        .merge(authority_routes)  // Yeni
         .with_state(shared_state)
         .layer(cors);
 
@@ -337,41 +374,103 @@ async fn voter_dashboard() -> (StatusCode, Json<Value>) {
 async fn create_poll(
     State(state): State<Arc<AppState>>,
     axum::Extension(admin_id): axum::Extension<i32>,
-    Json(payload): Json<CreatePollPayload>,
+    mut multipart: Multipart,
 ) -> (StatusCode, Json<Value>) {
-    let result = sqlx::query_as!(
+    let mut title = String::new();
+    let mut description: Option<String> = None;
+    let mut voters_data: Option<Vec<u8>> = None;
+
+    // Parse multipart form
+    while let Some(field) = multipart.next_field().await.unwrap() {
+        let name = field.name().unwrap_or("").to_string();
+        
+        match name.as_str() {
+            "title" => {
+                title = field.text().await.unwrap_or_default();
+            }
+            "description" => {
+                let desc = field.text().await.unwrap_or_default();
+                if !desc.is_empty() {
+                    description = Some(desc);
+                }
+            }
+            "voters_file" => {
+                voters_data = Some(field.bytes().await.unwrap().to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    if title.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Title is required"})));
+    }
+
+    // Create poll
+    let poll_result = sqlx::query_as!(
         Poll,
         "INSERT INTO polls (title, description, created_by, status) VALUES ($1, $2, $3, 'draft') RETURNING *",
-        payload.title,
-        payload.description,
+        title,
+        description,
         admin_id
     )
     .fetch_one(&state.db)
     .await;
 
-    match result {
-        Ok(poll) => {
-            // Add voters to the poll
-            for voter_id in payload.voter_ids {
-                let _ = sqlx::query!(
-                    "INSERT INTO poll_voters (poll_id, voter_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                    poll.id,
-                    voter_id
-                )
-                .execute(&state.db)
-                .await;
-            }
-            
-            (StatusCode::CREATED, Json(json!({
-                "message": "Poll created successfully",
-                "poll": poll
-            })))
-        }
+    let poll = match poll_result {
+        Ok(p) => p,
         Err(e) => {
             tracing::error!("Failed to create poll: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create poll"})))
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create poll"})));
+        }
+    };
+
+    // Process voters CSV if provided
+    let mut voter_count = 0;
+    if let Some(csv_data) = voters_data {
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(csv_data.as_slice());
+        
+        for result in rdr.deserialize::<VoterRecord>() {
+            if let Ok(record) = result {
+                let tc_hash = hash_data(&record.tc);
+                let phone_hash = hash_data(&record.phone);
+                
+                // Insert voter if not exists
+                let voter_result = sqlx::query_as!(
+                    Voter,
+                    "INSERT INTO voters (tc_hash, email, phone_hash) 
+                     VALUES ($1, $2, $3) 
+                     ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+                     RETURNING id, email, tc_hash, phone_hash",
+                    tc_hash,
+                    record.email.clone(),
+                    phone_hash
+                )
+                .fetch_one(&state.db)
+                .await;
+
+                if let Ok(voter) = voter_result {
+                    // Add voter to poll
+                    let _ = sqlx::query!(
+                        "INSERT INTO poll_voters (poll_id, voter_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                        poll.id,
+                        voter.id
+                    )
+                    .execute(&state.db)
+                    .await;
+                    
+                    voter_count += 1;
+                }
+            }
         }
     }
+
+    (StatusCode::CREATED, Json(json!({
+        "message": "Poll created successfully",
+        "poll": poll,
+        "voters_added": voter_count
+    })))
 }
 
 // List all polls (admin view)
@@ -575,5 +674,220 @@ async fn get_voter_polls(
             tracing::error!("Failed to fetch voter polls: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to fetch polls"})))
         }
+    }
+}
+// Authority Registration
+async fn register_authority(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuthorityRegistration>,
+) -> (StatusCode, Json<Value>) {
+    let tc_hash = hash_data(&payload.tc);
+    let phone_hash = hash_data(&payload.phone);
+    
+    let result = sqlx::query_as!(
+        Authority,
+        "INSERT INTO authorities (tc_hash, email, phone_hash, name) 
+         VALUES ($1, $2, $3, $4) 
+         RETURNING id, email, name, tc_hash, phone_hash",
+        tc_hash,
+        payload.email,
+        phone_hash,
+        payload.name
+    )
+    .fetch_one(&state.db)
+    .await;
+    
+    match result {
+        Ok(authority) => (
+            StatusCode::CREATED,
+            Json(json!({
+                "message": "Authority successfully registered",
+                "authority_id": authority.id,
+                "email": authority.email,
+                "name": authority.name
+            }))
+        ),
+        Err(e) => {
+            tracing::error!("Failed to register authority: {}", e);
+            if e.to_string().contains("duplicate key value") {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error": "Authority with this TC or email already exists."}))
+                );
+            }
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Could not register authority."}))
+            )
+        }
+    }
+}
+
+// Authority Login Start
+async fn authority_login_start(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LoginStartPayload>,
+) -> (StatusCode, Json<Value>) {
+    let tc_hash = hash_data(&payload.tc);
+    
+    let result = sqlx::query_as!(
+        Authority,
+        "SELECT id, email, name, tc_hash, phone_hash 
+         FROM authorities 
+         WHERE tc_hash = $1 AND email = $2",
+        tc_hash,
+        payload.email
+    )
+    .fetch_optional(&state.db)
+    .await;
+    
+    match result {
+        Ok(Some(authority)) => {
+            let email_otp = generate_otp();
+            let phone_otp = generate_otp();
+            let expiration = Utc::now().timestamp() + OTP_LIFESPAN_SECONDS;
+            
+            state.authority_otp_store
+                .lock()
+                .unwrap()
+                .insert(authority.id, (email_otp.clone(), phone_otp.clone(), expiration));
+            
+            tracing::info!("Authority login attempt for authority_id: {}", authority.id);
+            tracing::info!("--> Email OTP: {}", email_otp);
+            tracing::info!("--> Phone OTP: {}", phone_otp);
+            
+            (
+                StatusCode::OK,
+                Json(json!({"message": "Authority found. OTP codes generated. Check server logs."}))
+            )
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Authority not found with provided credentials"}))
+        ),
+        Err(e) => {
+            tracing::error!("Database error during authority_login_start: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "A database error occurred."}))
+            )
+        }
+    }
+}
+
+// Authority Login Verify
+async fn authority_login_verify(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LoginVerifyPayload>,
+) -> (StatusCode, Json<Value>) {
+    let tc_hash = hash_data(&payload.tc);
+    
+    let authority_result = sqlx::query_as!(
+        Authority,
+        "SELECT id, email, name, tc_hash, phone_hash 
+         FROM authorities 
+         WHERE tc_hash = $1 AND email = $2",
+        tc_hash,
+        payload.email
+    )
+    .fetch_optional(&state.db)
+    .await;
+    
+    let authority = match authority_result {
+        Ok(Some(authority)) => authority,
+        _ => return (StatusCode::NOT_FOUND, Json(json!({"error": "Authority not found"}))),
+    };
+    
+    let mut store = state.authority_otp_store.lock().unwrap();
+    
+    if let Some((stored_email_otp, stored_phone_otp, expiration)) = store.get(&authority.id) {
+        if Utc::now().timestamp() > *expiration {
+            store.remove(&authority.id);
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "OTP has expired"}))
+            );
+        }
+        
+        if *stored_email_otp == payload.email_otp && *stored_phone_otp == payload.phone_otp {
+            store.remove(&authority.id);
+            
+            let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize;
+            let claims = AuthorityClaims {
+                authority_id: authority.id,
+                exp,
+            };
+            
+            let token = encode(
+                &Header::default(),
+                &claims,
+                &EncodingKey::from_secret(JWT_SECRET.as_ref()),
+            )
+            .expect("Failed to create token");
+            
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "message": "Authority login successful",
+                    "token": token,
+                    "authority_email": authority.email,
+                    "authority_name": authority.name
+                }))
+            );
+        }
+    }
+    
+    (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid OTP codes"})))
+}
+
+// Authority Middleware
+async fn authority_auth(
+    State(_state): State<Arc<AppState>>,
+    TypedHeader(auth_header): TypedHeader<Authorization<Bearer>>,
+    mut request: Request<Body>,
+    next: Next<Body>,
+) -> Result<Response, StatusCode> {
+    let token = auth_header.token();
+    let decoding_key = DecodingKey::from_secret(JWT_SECRET.as_ref());
+    
+    match decode::<AuthorityClaims>(token, &decoding_key, &Validation::default()) {
+        Ok(token_data) => {
+            request.extensions_mut().insert(token_data.claims.authority_id);
+            Ok(next.run(request).await)
+        }
+        Err(_) => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
+// Authority Dashboard
+async fn authority_dashboard(
+    axum::Extension(authority_id): axum::Extension<i32>,
+    State(state): State<Arc<AppState>>,
+) -> (StatusCode, Json<Value>) {
+    // Get authority info
+    let authority = sqlx::query_as!(
+        Authority,
+        "SELECT id, email, name, tc_hash, phone_hash FROM authorities WHERE id = $1",
+        authority_id
+    )
+    .fetch_one(&state.db)
+    .await;
+    
+    match authority {
+        Ok(auth) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": "Welcome to authority dashboard!",
+                "authority": {
+                    "id": auth.id,
+                    "name": auth.name,
+                    "email": auth.email
+                }
+            }))
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Failed to fetch authority info"}))
+        ),
     }
 }
