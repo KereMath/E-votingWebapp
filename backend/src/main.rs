@@ -31,12 +31,13 @@ const OTP_LIFESPAN_SECONDS: i64 = 300; // OTP'ler 5 dakika geçerli
 // --- Veri Yapıları & Uygulama Durumu ---
 type OtpStore = Mutex<HashMap<i32, (String, String, i64)>>;
 type VoterOtpStore = Mutex<HashMap<i32, (String, String, i64)>>;
+type AuthorityOtpStore = Mutex<HashMap<i32, (String, String, i64)>>;
 
 struct AppState {
     db: PgPool,
     otp_store: OtpStore,
     voter_otp_store: VoterOtpStore,
-    authority_otp_store: Mutex::new(HashMap::new()), // Yeni
+    authority_otp_store: AuthorityOtpStore,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,23 +52,72 @@ struct VoterClaims {
     exp: usize,
 }
 
-#[derive(Serialize, Deserialize)]
-struct AdminRegistration { tc: String, email: String, phone: String }
-
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Admin { id: i32, email: String, tc_hash: String, phone_hash: String }
-
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Voter { id: i32, email: String, tc_hash: String, phone_hash: String }
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthorityClaims {
+    authority_id: i32,
+    exp: usize,
+}
 
 #[derive(Serialize, Deserialize)]
-struct LoginStartPayload { tc: String, email: String }
+struct AdminRegistration { 
+    tc: String, 
+    email: String, 
+    phone: String 
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Admin { 
+    id: i32, 
+    email: String, 
+    tc_hash: String, 
+    phone_hash: String 
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Voter { 
+    id: i32, 
+    email: String, 
+    tc_hash: String, 
+    phone_hash: String 
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Authority {
+    id: i32,
+    email: String,
+    name: String,
+    tc_hash: String,
+    phone_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AuthorityRegistration {
+    tc: String,
+    email: String,
+    phone: String,
+    name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LoginStartPayload { 
+    tc: String, 
+    email: String 
+}
 
 #[derive(Debug, Serialize, Deserialize)]
-struct LoginVerifyPayload { tc: String, email: String, email_otp: String, phone_otp: String }
+struct LoginVerifyPayload { 
+    tc: String, 
+    email: String, 
+    email_otp: String, 
+    phone_otp: String 
+}
 
 #[derive(Debug, Deserialize, sqlx::FromRow)]
-struct VoterRecord { tc: String, email: String, phone: String }
+struct VoterRecord { 
+    tc: String, 
+    email: String, 
+    phone: String 
+}
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Poll {
@@ -101,35 +151,6 @@ pub struct PollSetup {
     setup_completed_at: chrono::DateTime<Utc>,
     setup_by: i32,
 }
-// main.rs - struct'ları ekle
-
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Authority {
-    id: i32,
-    email: String,
-    name: String,
-    tc_hash: String,
-    phone_hash: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct AuthorityRegistration {
-    tc: String,
-    email: String,
-    phone: String,
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AuthorityClaims {
-    authority_id: i32,
-    exp: usize,
-}
-
-// OTP store'a authority ekle
-type AuthorityOtpStore = Mutex<HashMap<i32, (String, String, i64)>>;
-
-// AppState'e ekle
 
 // --- Ana Fonksiyon ---
 #[tokio::main]
@@ -161,6 +182,7 @@ async fn main() {
         db: pool.clone(),
         otp_store: Mutex::new(HashMap::new()),
         voter_otp_store: Mutex::new(HashMap::new()),
+        authority_otp_store: Mutex::new(HashMap::new()),
     });
 
     let cors = CorsLayer::new()
@@ -185,6 +207,7 @@ async fn main() {
     let authority_routes = Router::new()
         .route("/authority/dashboard", get(authority_dashboard))
         .route_layer(middleware::from_fn_with_state(shared_state.clone(), authority_auth));
+    
     // Public routes (setup parameters can be fetched publicly)
     let public_routes = Router::new()
         .route("/polls/:id/setup", get(get_poll_setup));
@@ -197,13 +220,13 @@ async fn main() {
         .route("/admin/login_verify", post(login_verify))
         .route("/voter/login_start", post(voter_login_start))
         .route("/voter/login_verify", post(voter_login_verify))
-        .route("/authority/register", post(register_authority))           // Yeni
-        .route("/authority/login_start", post(authority_login_start))     // Yeni
-        .route("/authority/login_verify", post(authority_login_verify))   // Yeni
+        .route("/authority/register", post(register_authority))
+        .route("/authority/login_start", post(authority_login_start))
+        .route("/authority/login_verify", post(authority_login_verify))
         .merge(public_routes)
         .merge(admin_routes)
         .merge(voter_routes)
-        .merge(authority_routes)  // Yeni
+        .merge(authority_routes)
         .with_state(shared_state)
         .layer(cors);
 
@@ -249,6 +272,27 @@ async fn voter_auth(
     match decode::<VoterClaims>(token, &decoding_key, &Validation::default()) {
         Ok(token_data) => {
             request.extensions_mut().insert(token_data.claims.voter_id);
+            Ok(next.run(request).await)
+        }
+        Err(_) => {
+            Err(StatusCode::UNAUTHORIZED)
+        }
+    }
+}
+
+// --- Authority Authentication Middleware ---
+async fn authority_auth(
+    State(_state): State<Arc<AppState>>,
+    TypedHeader(auth_header): TypedHeader<Authorization<Bearer>>,
+    mut request: Request<Body>,
+    next: Next<Body>,
+) -> Result<Response, StatusCode> {
+    let token = auth_header.token();
+    let decoding_key = DecodingKey::from_secret(JWT_SECRET.as_ref());
+    
+    match decode::<AuthorityClaims>(token, &decoding_key, &Validation::default()) {
+        Ok(token_data) => {
+            request.extensions_mut().insert(token_data.claims.authority_id);
             Ok(next.run(request).await)
         }
         Err(_) => {
@@ -329,21 +373,61 @@ async fn register_admin(State(state): State<Arc<AppState>>, Json(payload): Json<
     let tc_hash = hash_data(&payload.tc);
     let phone_hash = hash_data(&payload.phone);
     let result = sqlx::query_as!(Admin, "INSERT INTO admins (tc_hash, email, phone_hash) VALUES ($1, $2, $3) RETURNING id, email, tc_hash, phone_hash", tc_hash, payload.email, phone_hash).fetch_one(&state.db).await;
-    match result { Ok(admin) => (StatusCode::CREATED, Json(json!({"message": "Admin successfully registered", "admin_id": admin.id, "email": admin.email}))), Err(e) => { tracing::error!("Failed to register admin: {}", e); if e.to_string().contains("duplicate key value") { return (StatusCode::CONFLICT, Json(json!({"error": "Admin with this TC or email already exists."}))); } (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not register admin."}))) } }
+    match result { 
+        Ok(admin) => (StatusCode::CREATED, Json(json!({"message": "Admin successfully registered", "admin_id": admin.id, "email": admin.email}))), 
+        Err(e) => { 
+            tracing::error!("Failed to register admin: {}", e); 
+            if e.to_string().contains("duplicate key value") { 
+                return (StatusCode::CONFLICT, Json(json!({"error": "Admin with this TC or email already exists."}))); 
+            } 
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not register admin."}))) 
+        } 
+    }
 }
 
 async fn login_start(State(state): State<Arc<AppState>>, Json(payload): Json<LoginStartPayload>) -> (StatusCode, Json<Value>) {
     let tc_hash = hash_data(&payload.tc);
     let result = sqlx::query_as!(Admin, "SELECT id, email, tc_hash, phone_hash FROM admins WHERE tc_hash = $1 AND email = $2", tc_hash, payload.email).fetch_optional(&state.db).await;
-    match result { Ok(Some(admin)) => { let email_otp = generate_otp(); let phone_otp = generate_otp(); let expiration = Utc::now().timestamp() + OTP_LIFESPAN_SECONDS; state.otp_store.lock().unwrap().insert(admin.id, (email_otp.clone(), phone_otp.clone(), expiration)); tracing::info!("Login attempt for admin_id: {}", admin.id); tracing::info!("--> Email OTP: {}", email_otp); tracing::info!("--> Phone OTP: {}", phone_otp); (StatusCode::OK, Json(json!({"message": "Admin found. OTP codes generated. Check server logs."}))) }, Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Admin not found with provided credentials"}))), Err(e) => { tracing::error!("Database error during login_start: {}", e); (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "A database error occurred."}))) } }
+    match result { 
+        Ok(Some(admin)) => { 
+            let email_otp = generate_otp(); 
+            let phone_otp = generate_otp(); 
+            let expiration = Utc::now().timestamp() + OTP_LIFESPAN_SECONDS; 
+            state.otp_store.lock().unwrap().insert(admin.id, (email_otp.clone(), phone_otp.clone(), expiration)); 
+            tracing::info!("Login attempt for admin_id: {}", admin.id); 
+            tracing::info!("--> Email OTP: {}", email_otp); 
+            tracing::info!("--> Phone OTP: {}", phone_otp); 
+            (StatusCode::OK, Json(json!({"message": "Admin found. OTP codes generated. Check server logs."}))) 
+        }, 
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Admin not found with provided credentials"}))), 
+        Err(e) => { 
+            tracing::error!("Database error during login_start: {}", e); 
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "A database error occurred."}))) 
+        } 
+    }
 }
 
 async fn login_verify(State(state): State<Arc<AppState>>, Json(payload): Json<LoginVerifyPayload>) -> (StatusCode, Json<Value>) {
     let tc_hash = hash_data(&payload.tc);
     let admin_result = sqlx::query_as!(Admin, "SELECT id, email, tc_hash, phone_hash FROM admins WHERE tc_hash = $1 AND email = $2", tc_hash, payload.email).fetch_optional(&state.db).await;
-    let admin = match admin_result { Ok(Some(admin)) => admin, _ => return (StatusCode::NOT_FOUND, Json(json!({"error": "Admin not found"}))), };
+    let admin = match admin_result { 
+        Ok(Some(admin)) => admin, 
+        _ => return (StatusCode::NOT_FOUND, Json(json!({"error": "Admin not found"}))), 
+    };
     let mut store = state.otp_store.lock().unwrap();
-    if let Some((stored_email_otp, stored_phone_otp, expiration)) = store.get(&admin.id) { if Utc::now().timestamp() > *expiration { store.remove(&admin.id); return (StatusCode::UNAUTHORIZED, Json(json!({"error": "OTP has expired"}))); } if *stored_email_otp == payload.email_otp && *stored_phone_otp == payload.phone_otp { store.remove(&admin.id); let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize; let claims = Claims { admin_id: admin.id, exp }; let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(JWT_SECRET.as_ref())).expect("Failed to create token"); return (StatusCode::OK, Json(json!({"message": "Login successful", "token": token}))); } }
+    if let Some((stored_email_otp, stored_phone_otp, expiration)) = store.get(&admin.id) { 
+        if Utc::now().timestamp() > *expiration { 
+            store.remove(&admin.id); 
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "OTP has expired"}))); 
+        } 
+        if *stored_email_otp == payload.email_otp && *stored_phone_otp == payload.phone_otp { 
+            store.remove(&admin.id); 
+            let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize; 
+            let claims = Claims { admin_id: admin.id, exp }; 
+            let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(JWT_SECRET.as_ref())).expect("Failed to create token"); 
+            return (StatusCode::OK, Json(json!({"message": "Login successful", "token": token}))); 
+        } 
+    }
     (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid OTP codes"})))
 }
 
@@ -351,15 +435,46 @@ async fn login_verify(State(state): State<Arc<AppState>>, Json(payload): Json<Lo
 async fn voter_login_start(State(state): State<Arc<AppState>>, Json(payload): Json<LoginStartPayload>) -> (StatusCode, Json<Value>) {
     let tc_hash = hash_data(&payload.tc);
     let result = sqlx::query_as!(Voter, "SELECT id, email, tc_hash, phone_hash FROM voters WHERE tc_hash = $1 AND email = $2", tc_hash, payload.email).fetch_optional(&state.db).await;
-    match result { Ok(Some(voter)) => { let email_otp = generate_otp(); let phone_otp = generate_otp(); let expiration = Utc::now().timestamp() + OTP_LIFESPAN_SECONDS; state.voter_otp_store.lock().unwrap().insert(voter.id, (email_otp.clone(), phone_otp.clone(), expiration)); tracing::info!("Voter login attempt for voter_id: {}", voter.id); tracing::info!("--> Email OTP: {}", email_otp); tracing::info!("--> Phone OTP: {}", phone_otp); (StatusCode::OK, Json(json!({"message": "Voter found. OTP codes generated. Check server logs."}))) }, Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Voter not found with provided credentials"}))), Err(e) => { tracing::error!("Database error during voter_login_start: {}", e); (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "A database error occurred."}))) } }
+    match result { 
+        Ok(Some(voter)) => { 
+            let email_otp = generate_otp(); 
+            let phone_otp = generate_otp(); 
+            let expiration = Utc::now().timestamp() + OTP_LIFESPAN_SECONDS; 
+            state.voter_otp_store.lock().unwrap().insert(voter.id, (email_otp.clone(), phone_otp.clone(), expiration)); 
+            tracing::info!("Voter login attempt for voter_id: {}", voter.id); 
+            tracing::info!("--> Email OTP: {}", email_otp); 
+            tracing::info!("--> Phone OTP: {}", phone_otp); 
+            (StatusCode::OK, Json(json!({"message": "Voter found. OTP codes generated. Check server logs."}))) 
+        }, 
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Voter not found with provided credentials"}))), 
+        Err(e) => { 
+            tracing::error!("Database error during voter_login_start: {}", e); 
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "A database error occurred."}))) 
+        } 
+    }
 }
 
 async fn voter_login_verify(State(state): State<Arc<AppState>>, Json(payload): Json<LoginVerifyPayload>) -> (StatusCode, Json<Value>) {
     let tc_hash = hash_data(&payload.tc);
     let voter_result = sqlx::query_as!(Voter, "SELECT id, email, tc_hash, phone_hash FROM voters WHERE tc_hash = $1 AND email = $2", tc_hash, payload.email).fetch_optional(&state.db).await;
-    let voter = match voter_result { Ok(Some(voter)) => voter, _ => return (StatusCode::NOT_FOUND, Json(json!({"error": "Voter not found"}))), };
+    let voter = match voter_result { 
+        Ok(Some(voter)) => voter, 
+        _ => return (StatusCode::NOT_FOUND, Json(json!({"error": "Voter not found"}))), 
+    };
     let mut store = state.voter_otp_store.lock().unwrap();
-    if let Some((stored_email_otp, stored_phone_otp, expiration)) = store.get(&voter.id) { if Utc::now().timestamp() > *expiration { store.remove(&voter.id); return (StatusCode::UNAUTHORIZED, Json(json!({"error": "OTP has expired"}))); } if *stored_email_otp == payload.email_otp && *stored_phone_otp == payload.phone_otp { store.remove(&voter.id); let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize; let claims = VoterClaims { voter_id: voter.id, exp }; let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(JWT_SECRET.as_ref())).expect("Failed to create token"); return (StatusCode::OK, Json(json!({"message": "Voter login successful", "token": token, "voter_email": voter.email}))); } }
+    if let Some((stored_email_otp, stored_phone_otp, expiration)) = store.get(&voter.id) { 
+        if Utc::now().timestamp() > *expiration { 
+            store.remove(&voter.id); 
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "OTP has expired"}))); 
+        } 
+        if *stored_email_otp == payload.email_otp && *stored_phone_otp == payload.phone_otp { 
+            store.remove(&voter.id); 
+            let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize; 
+            let claims = VoterClaims { voter_id: voter.id, exp }; 
+            let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(JWT_SECRET.as_ref())).expect("Failed to create token"); 
+            return (StatusCode::OK, Json(json!({"message": "Voter login successful", "token": token, "voter_email": voter.email}))); 
+        } 
+    }
     (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid OTP codes"})))
 }
 
@@ -676,6 +791,9 @@ async fn get_voter_polls(
         }
     }
 }
+
+// --- Authority Endpoints ---
+
 // Authority Registration
 async fn register_authority(
     State(state): State<Arc<AppState>>,
@@ -838,25 +956,6 @@ async fn authority_login_verify(
     }
     
     (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid OTP codes"})))
-}
-
-// Authority Middleware
-async fn authority_auth(
-    State(_state): State<Arc<AppState>>,
-    TypedHeader(auth_header): TypedHeader<Authorization<Bearer>>,
-    mut request: Request<Body>,
-    next: Next<Body>,
-) -> Result<Response, StatusCode> {
-    let token = auth_header.token();
-    let decoding_key = DecodingKey::from_secret(JWT_SECRET.as_ref());
-    
-    match decode::<AuthorityClaims>(token, &decoding_key, &Validation::default()) {
-        Ok(token_data) => {
-            request.extensions_mut().insert(token_data.claims.authority_id);
-            Ok(next.run(request).await)
-        }
-        Err(_) => Err(StatusCode::UNAUTHORIZED),
-    }
 }
 
 // Authority Dashboard
